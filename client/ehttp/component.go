@@ -1,11 +1,14 @@
 package ehttp
 
 import (
+	"log"
+	"time"
+
 	"github.com/go-resty/resty/v2"
+
 	"github.com/gotomicro/ego/core/eapp"
 	"github.com/gotomicro/ego/core/elog"
 	"github.com/gotomicro/ego/core/util/xdebug"
-	"time"
 )
 
 const PackageName = "client.ehttp"
@@ -24,7 +27,7 @@ func newComponent(name string, config *Config, logger *elog.Component) *Componen
 	}).OnAfterResponse(func(client *resty.Client, response *resty.Response) error {
 		rr := response.Request.RawRequest
 		if eapp.IsDevelopmentMode() {
-			xdebug.Info(name, config.Addr, response.Time(), response.Request.Method+"."+rr.URL.RequestURI(), string(response.Body()))
+			log.Println("http.response", xdebug.MakeReqResInfo(name, config.Addr, response.Time(), response.Request.Method+"."+rr.URL.RequestURI(), string(response.Body())))
 		}
 
 		isSlowLog := false

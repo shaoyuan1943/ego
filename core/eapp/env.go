@@ -16,6 +16,8 @@ var (
 	appInstance   string
 	egoDebug      string
 	egoConfigPath string
+	egoLogPath    string
+	egoLogAddApp  string
 )
 
 func InitEnv() {
@@ -32,6 +34,8 @@ func InitEnv() {
 	if egoConfigPath == "" {
 		egoConfigPath = "config/local.toml"
 	}
+	egoLogPath = os.Getenv(constant.EgoLogPath)
+	egoLogAddApp = os.Getenv(constant.EgoLogAddApp)
 }
 
 func AppMode() string {
@@ -57,4 +61,12 @@ func IsDevelopmentMode() bool {
 
 func EgoConfigPath() string {
 	return egoConfigPath
+}
+
+func EgoLogPath() string {
+	return egoLogPath
+}
+
+func EnableLoggerAddApp() bool {
+	return egoLogAddApp == "true"
 }

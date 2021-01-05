@@ -14,6 +14,11 @@ func FieldComponentName(value string) Field {
 	return String("compName", value)
 }
 
+// FieldApp ...
+func FieldApp(value string) Field {
+	return String("app", value)
+}
+
 func FieldAddr(value string) Field {
 	return String("addr", value)
 }
@@ -23,14 +28,23 @@ func FieldName(value string) Field {
 	return String("name", value)
 }
 
-// FieldType ...
+// FieldType ... level 1
 func FieldType(value string) Field {
 	return String("type", value)
+}
+
+// FieldKind ... level 2
+func FieldKind(value string) Field {
+	return String("kind", value)
 }
 
 // FieldCode ...
 func FieldCode(value int32) Field {
 	return Int32("code", value)
+}
+
+func FieldSize(value int32) Field {
+	return Int32("size", value)
 }
 
 // 耗时时间
@@ -63,9 +77,8 @@ func FieldErr(err error) Field {
 	return zap.Error(err)
 }
 
-// FieldErr ...
-func FieldStringErr(err string) Field {
-	return String("err", err)
+func FieldDescription(value string) Field {
+	return String("desc", value)
 }
 
 // FieldExtMessage ...
@@ -86,4 +99,16 @@ func FieldMethod(value string) Field {
 // FieldEvent ...
 func FieldEvent(value string) Field {
 	return String("event", value)
+}
+
+func FieldIp(value string) Field {
+	return String("ip", value)
+}
+
+func FieldPeerIP(value string) Field {
+	return String("peerIp", value)
+}
+
+func FieldPeerName(value string) Field {
+	return String("peerName", value)
 }

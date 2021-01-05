@@ -2,23 +2,25 @@ package egrpc
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"runtime"
 	"strings"
 	"time"
 
-	"github.com/gotomicro/ego/core/ecode"
-	"github.com/gotomicro/ego/core/elog"
-	"github.com/gotomicro/ego/core/etrace"
 	"github.com/opentracing/opentracing-go/ext"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
+	"github.com/gotomicro/ego/core/ecode"
+	"github.com/gotomicro/ego/core/elog"
 	"github.com/gotomicro/ego/core/emetric"
-	"google.golang.org/grpc"
+	"github.com/gotomicro/ego/core/etrace"
+	"github.com/gotomicro/ego/core/util/xstring"
 )
 
 func prometheusUnaryServerInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
@@ -98,7 +100,7 @@ func extractApp(ctx context.Context) string {
 	return "unknown"
 }
 
-func defaultStreamServerInterceptor(logger *elog.Component, slowLogThreshold time.Duration) grpc.StreamServerInterceptor {
+func defaultStreamServerInterceptor(logger *elog.Component, config *Config) grpc.StreamServerInterceptor {
 	return func(srv interface{}, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) (err error) {
 		var beg = time.Now()
 		var fields = make([]elog.Field, 0, 8)
@@ -106,7 +108,7 @@ func defaultStreamServerInterceptor(logger *elog.Component, slowLogThreshold tim
 		defer func() {
 			cost := time.Since(beg)
 
-			if slowLogThreshold > time.Duration(0) && slowLogThreshold < cost {
+			if config.SlowLogThreshold > time.Duration(0) && config.SlowLogThreshold < cost {
 				event = "slow"
 			}
 
@@ -124,14 +126,12 @@ func defaultStreamServerInterceptor(logger *elog.Component, slowLogThreshold tim
 			}
 
 			fields = append(fields,
-				elog.Any("grpc interceptor type", "stream"),
+				elog.FieldType("stream"),
 				elog.FieldMethod(info.FullMethod),
 				elog.FieldCost(time.Since(beg)),
+				elog.FieldPeerName(getPeerName(stream.Context())),
+				elog.FieldPeerIP(getPeerIP(stream.Context())),
 			)
-
-			for key, val := range getPeer(stream.Context()) {
-				fields = append(fields, elog.Any(key, val))
-			}
 
 			if err != nil {
 				fields = append(fields, elog.FieldErr(err))
@@ -148,14 +148,16 @@ func defaultStreamServerInterceptor(logger *elog.Component, slowLogThreshold tim
 	}
 }
 
-func defaultUnaryServerInterceptor(logger *elog.Component, slowLogThreshold time.Duration) grpc.UnaryServerInterceptor {
-	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp interface{}, err error) {
+func defaultUnaryServerInterceptor(logger *elog.Component, config *Config) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (res interface{}, err error) {
 		var beg = time.Now()
 		var fields = make([]elog.Field, 0, 8)
 		var event = "normal"
+
+		// 此处必须使用defer来recover handler内部可能出现的panic
 		defer func() {
 			cost := time.Since(beg)
-			if slowLogThreshold > time.Duration(0) && slowLogThreshold < cost {
+			if config.SlowLogThreshold > time.Duration(0) && config.SlowLogThreshold < cost {
 				event = "slow"
 			}
 
@@ -174,14 +176,18 @@ func defaultUnaryServerInterceptor(logger *elog.Component, slowLogThreshold time
 			}
 
 			fields = append(fields,
-				elog.Any("grpc interceptor type", "unary"),
+				elog.FieldType("unary"),
 				elog.FieldEvent(event),
 				elog.FieldMethod(info.FullMethod),
 				elog.FieldCost(time.Since(beg)),
+				elog.FieldPeerName(getPeerName(ctx)),
+				elog.FieldPeerIP(getPeerIP(ctx)),
 			)
-
-			for key, val := range getPeer(ctx) {
-				fields = append(fields, elog.Any(key, val))
+			if config.EnableAccessInterceptorReq {
+				fields = append(fields, elog.Any("req", json.RawMessage(xstring.Json(req))))
+			}
+			if config.EnableAccessInterceptorRes {
+				fields = append(fields, elog.Any("res", json.RawMessage(xstring.Json(res))))
 			}
 
 			if err != nil {
@@ -195,75 +201,45 @@ func defaultUnaryServerInterceptor(logger *elog.Component, slowLogThreshold time
 				logger.Info("access", fields...)
 			}
 		}()
+
 		return handler(ctx, req)
 	}
 }
 
-func getClientIP(ctx context.Context) (string, error) {
-	pr, ok := peer.FromContext(ctx)
+// getPeerName 获取对端应用名称
+func getPeerName(ctx context.Context) string {
+	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
-		return "", fmt.Errorf("[getClinetIP] invoke FromContext() failed")
+		return ""
+	}
+	val, ok2 := md["app"]
+	if !ok2 {
+		return ""
+	}
+	return strings.Join(val, ";")
+}
+
+// getPeerIP 获取对端ip
+func getPeerIP(ctx context.Context) string {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return ""
+	}
+	// 从metadata里取对端ip
+	if val, ok := md["client-ip"]; ok {
+		return strings.Join(val, ";")
+	}
+	// 从grpc里取对端ip
+	pr, ok2 := peer.FromContext(ctx)
+	if !ok2 {
+		return ""
 	}
 	if pr.Addr == net.Addr(nil) {
-		return "", fmt.Errorf("[getClientIP] peer.Addr is nil")
+		return ""
 	}
 	addSlice := strings.Split(pr.Addr.String(), ":")
-	return addSlice[0], nil
-}
-
-func getPeer(ctx context.Context) map[string]string {
-	var peerMeta = make(map[string]string)
-	if md, ok := metadata.FromIncomingContext(ctx); ok {
-		if val, ok := md["app"]; ok {
-			peerMeta["app"] = strings.Join(val, ";")
-		}
-		var clientIP string
-		if val, ok := md["client-ip"]; ok {
-			clientIP = strings.Join(val, ";")
-		} else {
-			ip, err := getClientIP(ctx)
-			if err == nil {
-				clientIP = ip
-			}
-		}
-		peerMeta["clientIP"] = clientIP
-		if val, ok := md["client-host"]; ok {
-			peerMeta["host"] = strings.Join(val, ";")
-		}
+	if len(addSlice) > 1 {
+		return addSlice[0]
 	}
-	return peerMeta
-
-}
-
-// StreamInterceptorChain returns stream interceptors chain.
-func StreamInterceptorChain(interceptors ...grpc.StreamServerInterceptor) grpc.StreamServerInterceptor {
-	build := func(c grpc.StreamServerInterceptor, n grpc.StreamHandler, info *grpc.StreamServerInfo) grpc.StreamHandler {
-		return func(srv interface{}, stream grpc.ServerStream) error {
-			return c(srv, stream, info, n)
-		}
-	}
-	return func(srv interface{}, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) (err error) {
-		chain := handler
-		for i := len(interceptors) - 1; i >= 0; i-- {
-			chain = build(interceptors[i], chain, info)
-		}
-		return chain(srv, stream)
-	}
-}
-
-// UnaryInterceptorChain returns interceptors chain.
-func UnaryInterceptorChain(interceptors ...grpc.UnaryServerInterceptor) grpc.UnaryServerInterceptor {
-	build := func(c grpc.UnaryServerInterceptor, n grpc.UnaryHandler, info *grpc.UnaryServerInfo) grpc.UnaryHandler {
-		return func(ctx context.Context, req interface{}) (interface{}, error) {
-			return c(ctx, req, info, n)
-		}
-	}
-
-	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp interface{}, err error) {
-		chain := handler
-		for i := len(interceptors) - 1; i >= 0; i-- {
-			chain = build(interceptors[i], chain, info)
-		}
-		return chain(ctx, req)
-	}
+	return ""
 }
