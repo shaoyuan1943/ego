@@ -24,8 +24,7 @@ func newComponent(name string, config *Config, logger *elog.Component) *Componen
 	}).OnAfterResponse(func(client *resty.Client, response *resty.Response) error {
 		rr := response.Request.RawRequest
 		if eapp.IsDevelopmentMode() {
-			logger.Info("http.reply", elog.String("msg",
-				xdebug.MakeReqRspInfo(name, config.Addr, response.Time(), response.Request.Method+"."+rr.URL.RequestURI(), string(response.Body()))))
+			xdebug.Info(name, config.Addr, response.Time(), response.Request.Method+"."+rr.URL.RequestURI(), string(response.Body()))
 		}
 
 		isSlowLog := false
@@ -44,13 +43,17 @@ func newComponent(name string, config *Config, logger *elog.Component) *Componen
 		}
 
 		if config.SlowLogThreshold > time.Duration(0) && response.Time() > config.SlowLogThreshold {
-			fields = append(fields, elog.FieldEvent("slow"))
+			fields = append(fields,
+				elog.FieldEvent("slow"),
+			)
 			logger.Warn("access", fields...)
 			isSlowLog = true
 		}
 
 		if config.EnableAccessInterceptor && !isSlowLog {
-			fields = append(fields, elog.FieldEvent("normal"))
+			fields = append(fields,
+				elog.FieldEvent("normal"),
+			)
 			logger.Info("access", fields...)
 		}
 		return nil
